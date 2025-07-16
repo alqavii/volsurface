@@ -1,10 +1,6 @@
-from math import e
 from matplotlib import cm
-from psutil import disk_partitions
-from torch import alpha_dropout
 import yfinance as yf
 import pandas as pd
-import time
 from datetime import datetime, timedelta, date
 import numpy as np
 import matplotlib.pyplot as plt
