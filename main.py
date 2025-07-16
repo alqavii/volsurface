@@ -18,7 +18,8 @@ from matplotlib import cm, dates as mdates
 import plotly.express as px
 import plotly.graph_objects as go
 import os
-FredApiKey = os.getenv("FRED_API_KEY")
+
+FredApiKey = st.secrets("FRED_API_KEY") or os.getenv("FRED_API_KEY")
 
 from fredapi import Fred
 fred = Fred(api_key=FredApiKey)
