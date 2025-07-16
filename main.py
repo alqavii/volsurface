@@ -20,7 +20,7 @@ import plotly.graph_objects as go
 import os
 import streamlit as st
 
-FredApiKey = st.secrets("FRED_API_KEY") or os.getenv("FRED_API_KEY")
+FredApiKey = st.secrets.get("FRED_API_KEY") or os.getenv("FRED_API_KEY")
 
 from fredapi import Fred
 fred = Fred(api_key=FredApiKey)
