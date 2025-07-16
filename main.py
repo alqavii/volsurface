@@ -15,6 +15,8 @@ from scipy.interpolate import UnivariateSpline
 from math import isfinite
 from scipy.interpolate import griddata
 from matplotlib import cm, dates as mdates
+import plotly.express as px
+import plotly.graph_objects as go
 import os
 FredApiKey = os.getenv("FRED_API_KEY")
 
@@ -270,7 +272,7 @@ class surface():
             print("\n")
         return
         
-    def fig2dIVSurface(self):
+    def plot2dIVSurface(self):
         fig, ax = plt.subplots(figsize=(10,6), dpi=600)
         for exp, data in self.surface.items():
             ax.plot(data['strike'], data['smoothedIV'], label=f'{exp}')
@@ -280,9 +282,10 @@ class surface():
         ax.set_ylabel('Implied Volatility')
         ax.legend()
         ax.grid()
+        ax.show()
         return fig
 
-    def fig3dIVSurface(self):
+    def plot3dIVSurface(self):
         # --- build the surface grid as before ---
         pts, ivs = [], []
         for exp_str, data in self.surface.items():
@@ -374,8 +377,75 @@ class surface():
         fig.canvas.mpl_connect('motion_notify_event',  on_mouse_move)
         fig.canvas.mpl_connect('button_release_event', on_button_release)
 
+        plt.show()
         plt.tight_layout()
+        return 
+
+
+    def fig2dIVSurface(self):
+        # explode your surface dict into a flat DataFrame
+        rows = []
+        for exp, df in self.surface.items():
+            for K, iv in zip(df['strike'], df['smoothedIV']):
+                rows.append({'Expiry': exp, 'Strike': K, 'IV': iv})
+        pdf = pd.DataFrame(rows)
+
+        fig = px.line(
+            pdf,
+            x='Strike',
+            y='IV',
+            color='Expiry',
+            title=f'2D IV Surface for {self.ticker}'
+        )
+        fig.add_vline(x=self.spot, line_dash='dash', line_color='black')
         return fig
+    
+
+
+    def fig3dIVSurface(self):
+        # collect points
+        strikes, Ts, IVs = [], [], []
+        for exp, df in self.surface.items():
+            day, month = map(int, exp.split('/'))
+            dt = datetime(datetime.today().year, month, day)
+            t_num = mdates.date2num(dt)
+            for K, iv in zip(df['strike'], df['smoothedIV']):
+                strikes.append(K)
+                Ts.append(t_num)
+                IVs.append(iv)
+
+        # make a meshgrid for surface
+        grid_K = np.linspace(min(strikes), max(strikes), 60)
+        grid_T = np.linspace(min(Ts), max(Ts), 60)
+        K_mesh, T_mesh = np.meshgrid(grid_K, grid_T)
+        Z = griddata(
+            np.column_stack((strikes, Ts)), IVs,
+            (K_mesh, T_mesh),
+            method='cubic'
+        )
+
+        # convert numeric date back to datetime for axis
+        T_dates = [mdates.num2date(x) for x in grid_T]
+
+        fig = go.Figure(data=go.Surface(
+            x=grid_K,
+            y=T_dates,
+            z=Z,
+            colorscale='Jet',
+            showscale=True,
+            colorbar=dict(title='IV')
+        ))
+        fig.update_layout(
+            scene=dict(
+                xaxis_title='Strike',
+                yaxis_title='Expiry Date',
+                zaxis_title='IV'
+            ),
+            title=f'3D IV Surface for {self.ticker}',
+            autosize=True
+        )
+        return fig
+
 
 
 
@@ -401,9 +471,9 @@ if ticker:
     # 2D plot
     st.subheader("Impled Volatility Surface (2D)")
     fig2d = surf.fig2dIVSurface()   # your method must return the Figure
-    st.pyplot(fig2d)
+    st.plotly_chart(fig2d, use_container_width=True)
 
     # 3D plot
     st.subheader("3D Volatility Surface")
     fig3d = surf.fig3dIVSurface()   # ditto
-    st.pyplot(fig3d)
+    st.plotly_chart(fig3d, use_container_width=True)
