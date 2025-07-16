@@ -1,0 +1,19 @@
+# core
+streamlit==1.47.0
+numpy>=1.23
+pandas>=2.0
+scipy>=1.10
+matplotlib>=3.6
+
+# plotting
+plotly>=5.0
+
+# data sources
+yfinance>=0.2.18
+fredapi>=0.4.0
+
+# optional extras you import
+torch>=2.0           # if you really need alpha_dropout()
+psutil>=5.9          # if you still use disk_partitions()
+
+# (and any others you actually import)
