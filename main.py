@@ -1,5 +1,4 @@
 from math import e
-from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 from psutil import disk_partitions
 from torch import alpha_dropout
@@ -20,7 +19,7 @@ import plotly.graph_objects as go
 import os
 import streamlit as st
 
-FredApiKey = st.secrets.get("FRED_API_KEY") or os.getenv("FRED_API_KEY")
+FredApiKey = st.secrets["FRED_API_KEY"] or os.getenv("FRED_API_KEY")
 
 from fredapi import Fred
 fred = Fred(api_key=FredApiKey)
