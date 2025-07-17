@@ -1,6 +1,5 @@
 from time import sleep
 from functools import lru_cache
-from xmlrpc.client import ExpatParser
 from matplotlib import cm
 import yfinance as yf
 import pandas as pd
@@ -16,10 +15,9 @@ from matplotlib import cm, dates as mdates
 import plotly.express as px
 import plotly.graph_objects as go
 import os
-import streamlit as st
-import pytz
 
-FredApiKey = st.secrets["FRED_API_KEY"] or os.getenv("FRED_API_KEY")
+
+FredApiKey = os.getenv("FRED_API_KEY")
 
 from fredapi import Fred
 fred = Fred(api_key=FredApiKey)
@@ -55,9 +53,11 @@ class surface():
         self.getCalls()
         self.getPuts()
         self.getTimeToExpiry()
-        self.getRates()
         self.getDividendYield()
+        self.getRates()
         self.ivSurface()
+        
+        
         
 
 
@@ -133,13 +133,13 @@ class surface():
             print("\n")
     
     def getTimeToExpiry(self):
-        eastern = pytz.timezone('US/Eastern')
+        self.timeToExpiries = {}
         for expiry in self.calls:
             day, month = map(int, expiry.split('/'))
-            now = datetime.now(eastern)
-            year = now.year
-            expiryDate = eastern.localize(datetime(year, month, day, 16, 0, 0))  
-            self.timeToExpiries[expiry] = (expiryDate - now).total_seconds() / (365.25 * 24 * 3600)  
+            today = datetime.today()
+            year = today.year
+            expiry_date = datetime(year, month, day)
+            self.timeToExpiries[expiry] = (expiry_date - today).days / 365
 
     def printTimeToExpiry(self):
         if not self.timeToExpiries:
@@ -193,8 +193,7 @@ class surface():
 
     def getDividendYield(self):
         self.dividendYield = self.stock.info.get('dividendYield', 0)
-        return 
-
+    
     def printInfo(self):
         info = self.stock.info
         print(f"Ticker: {self.ticker}")
@@ -208,13 +207,11 @@ class surface():
     def printAll(self):
         self.printInfo()
         self.printRate()
-        self.printDividendYield()
         self.printOptions()
-
 
     def _blackScholesCall(self, sigma, K, T):
         r = self.latestRate / 100
-        q = self.dividendYield /100
+        q = self.dividendYield
         S = self.spot
         d1 = (np.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
@@ -242,11 +239,13 @@ class surface():
 
     def ivSurface(self):
         for expiry, data in self.calls.items():
+            print(self.latestRate)
             T = self.timeToExpiries[expiry]
             data = data.copy()
             #data = data[(data['bid'] > 0) & (data['ask'] > data['bid']) & (data['ask'] < self.spot * 2)]
             data['midPrice'] = (data['bid'] + data['ask']) / 2
             data['IV'] = data.apply(lambda row: self.impliedVolatility(C = (row['bid'] + row['ask'])/2, K = row['strike'], T = T), axis=1)
+            print(data)
             #data['IV'] = data.apply(lambda row: self.impliedVolatility(C = row['lastPrice'], K = row['strike'], T = T), axis=1)
             data['smoothedIV'] = UnivariateSpline(data.dropna(subset=['IV'])['strike'], data.dropna(subset=['IV'])['IV'], s=0.8)(data['strike'])
             self.surface[expiry] = data[['strike', 'midPrice', 'IV', 'smoothedIV']].copy()
@@ -370,107 +369,12 @@ class surface():
         plt.show()
         plt.tight_layout()
         return 
-
-
-    def fig2dIVSurface(self):
-        # explode your surface dict into a flat DataFrame
-        rows = []
-        for exp, df in self.surface.items():
-            for K, iv in zip(df['strike'], df['smoothedIV']):
-                rows.append({'Expiry': exp, 'Strike': K, 'IV': iv})
-        pdf = pd.DataFrame(rows)
-
-        fig = px.line(
-            pdf,
-            x='Strike',
-            y='IV',
-            color='Expiry',
-            title=f'2D IV Surface for {self.ticker}'
-        )
-        fig.add_vline(x=self.spot, line_dash='dash', line_color='black')
-        return fig
     
-
-
-    def fig3dIVSurface(self):
-        # collect points
-        strikes, Ts, IVs = [], [], []
-        for exp, df in self.surface.items():
-            day, month = map(int, exp.split('/'))
-            dt = datetime(datetime.today().year, month, day)
-            t_num = mdates.date2num(dt)
-            for K, iv in zip(df['strike'], df['smoothedIV']):
-                strikes.append(K)
-                Ts.append(t_num)
-                IVs.append(iv)
-
-        # make a meshgrid for surface
-        grid_K = np.linspace(min(strikes), max(strikes), 60)
-        grid_T = np.linspace(min(Ts), max(Ts), 60)
-        K_mesh, T_mesh = np.meshgrid(grid_K, grid_T)
-        Z = griddata(
-            np.column_stack((strikes, Ts)), IVs,
-            (K_mesh, T_mesh),
-            method='cubic'
-        )
-
-        # convert numeric date back to datetime for axis
-        T_dates = [mdates.num2date(x) for x in grid_T]
-
-        fig = go.Figure(data=go.Surface(
-            x=grid_K,
-            y=T_dates,
-            z=Z,
-            colorscale='Jet',
-            showscale=True,
-            colorbar=dict(title='IV')
-        ))
-        fig.update_layout(
-            scene=dict(
-                xaxis_title='Strike',
-                yaxis_title='Expiry Date',
-                zaxis_title='IV'
-            ),
-            title=f'3D IV Surface for {self.ticker}',
-            autosize=True
-        )
-        return fig
-
-
-
 
 test = surface()
-test.ticker = "AAPL"
-print(test.calls)
+test.ticker = "MSFT"
+test.printAll()
+test.printCalls()
+test.printIVSurface()
+test.plot2dIVSurface()
 
-
-st.title("Volatility Surface Explorer")
-
-# Sidebar: ticker input
-ticker = st.sidebar.text_input("Ticker", value="AAPL").upper()
-
-if ticker:
-    # Build and compute
-    surf = surface()
-    surf.ticker = ticker
-
-    # Market stats
-    st.subheader("Market Data")
-    st.write(f"• Spot price: ${surf.spot:.2f}")
-    st.write(f"• Risk-free rate: {surf.latestRate:.2f}%")
-    try:
-        st.write(f"• Dividend yield: {surf.dividendYield:.2f}%")
-    except:
-        st.write(f"• Dividend yield: 0%")
-
-    # 3D plot
-    st.subheader("3D Volatility Surface")
-    fig3d = surf.fig3dIVSurface()   # ditto
-    st.plotly_chart(fig3d, use_container_width=True)
-
-    # 2D plot
-    st.subheader("Impled Volatility Surface (2D)")
-    fig2d = surf.fig2dIVSurface()   # your method must return the Figure
-    st.plotly_chart(fig2d, use_container_width=True)
-
-    
