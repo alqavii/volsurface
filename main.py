@@ -441,8 +441,6 @@ class surface():
 
 test = surface()
 test.ticker = "AAPL"
-print(test.calls)
-
 
 st.title("Volatility Surface Explorer")
 
