@@ -1,3 +1,4 @@
+from email import header
 from time import sleep
 from functools import lru_cache
 from xmlrpc.client import ExpatParser
@@ -18,7 +19,7 @@ import plotly.graph_objects as go
 import os
 import streamlit as st
 import pytz
-import json
+import requests
 
 FredApiKey = st.secrets["FRED_API_KEY"] or os.getenv("FRED_API_KEY")
 
@@ -62,7 +63,6 @@ class surface():
         self.ivSurface()
         self.getTickerUniverse()
         
-
     def getTickerUniverse(self):
         tickerUniverse = "tickerUniverse.csv"
 
@@ -83,11 +83,11 @@ class surface():
         rows = []
         for ticker, name in zip(tickers['ticker'], tickers['name']):
             try:
-                sleep(0.5)  # Avoid hitting API limits
+                sleep(0.2)  # Avoid hitting API limits
+                print(f"Processing {ticker}...")
                 stock = yf.Ticker(ticker)
                 mcap = stock.info.get('marketCap', 0)
-                if mcap and mcap > 1e9:  # Only big caps
-                    rows.append({"ticker": ticker, "name": name, "mcap": mcap})
+                rows.append({"ticker": ticker, "name": name, "mcap": mcap})
             except Exception as e:
                 print(f"Failed {ticker}: {e}")
                 continue
