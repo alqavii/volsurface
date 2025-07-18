@@ -19,7 +19,7 @@ import plotly.graph_objects as go
 import os
 import streamlit as st
 import pytz
-import requests
+import threading
 
 FredApiKey = st.secrets["FRED_API_KEY"] or os.getenv("FRED_API_KEY")
 
@@ -44,6 +44,7 @@ class surface():
         self.surface = {}
         self.dividendYield = None
         self.universe = {}
+        self.autocompleteList = pd.DataFrame(columns=["ticker", "name", "spot", "mcap"])
 
     @property
     def ticker(self):
@@ -55,15 +56,17 @@ class surface():
         self.spot = self.stock.history(period="1d")['Close'].iloc[-1]
         #self.history = self.stock.history(period="1mo")
         print(f"Spot price for {self.ticker} is ${self.spot:.2f}\n")
+        self.backgroundTickerUniverse()
         self.getCalls()
         self.getPuts()
         self.getTimeToExpiry()
         self.getRates()
         self.getDividendYield()
         self.ivSurface()
-        self.getTickerUniverse()
         
-    def getTickerUniverse(self):
+        
+        
+    def getTickerUniverse(self, full=True):
         tickerUniverse = "tickerUniverse.csv"
 
         if os.path.exists(tickerUniverse):
@@ -86,16 +89,34 @@ class surface():
                 sleep(0.2)  # Avoid hitting API limits
                 print(f"Processing {ticker}...")
                 stock = yf.Ticker(ticker)
+                spot = stock.history(period="1d")['Close'].iloc[-1]
                 mcap = stock.info.get('marketCap', 0)
-                rows.append({"ticker": ticker, "name": name, "mcap": mcap})
+                mcap = stock.info.get('marketCap', 0)
+                mcap_billion = mcap / 1e9 if mcap is not None else 0
+                if full or mcap_billion > 1:
+                    rows.append({"ticker": ticker, "name": name, "spot": spot, "mcap": mcap_billion})
             except Exception as e:
                 print(f"Failed {ticker}: {e}")
                 continue
 
-        # Save to CSV
         df = pd.DataFrame(rows)
         df.to_csv(tickerUniverse, index=False)
         self.universe = df.set_index("ticker").to_dict(orient="index")
+        self.autocompleteList = [f"{ticker} - {info['name']} - {info['spot']} - ${info['mcap']}B" for ticker, info in self.universe.items()]
+
+
+    def backgroundTickerUniverse(self):
+        if os.path.exists("tickerUniverse.csv"):
+            df = pd.read_csv("tickerUniverse.csv")
+            modified = datetime.fromtimestamp(os.path.getmtime("tickerUniverse.csv"))
+            age_seconds = (datetime.now() - modified).total_seconds()
+            if age_seconds > 86400: 
+                threading.Thread(target=self.getTickerUniverse).start()
+            if age_seconds > 3600 and age_seconds < 86400:
+                threading.Thread(target=self.getTickerUniverse, kwargs={"full": False}).start()
+        else:
+            threading.Thread(target=self.getTickerUniverse).start()
+        return
 
  
     def getCalls(self):
@@ -281,6 +302,8 @@ class surface():
     def ivSurface(self):
         for expiry, data in self.calls.items():
             T = self.timeToExpiries[expiry]
+            if T * 365 * 24 < 6:
+                continue
             data = data.copy()
             #data = data[(data['bid'] > 0) & (data['ask'] > data['bid']) & (data['ask'] < self.spot * 2)]
             data['midPrice'] = (data['bid'] + data['ask']) / 2
@@ -487,13 +510,15 @@ st.title("Volatility Surface Explorer")
 # Sidebar: ticker input
 ticker = st.sidebar.text_input("Ticker", value="AAPL").upper()
 
+
 if ticker:
     # Build and compute
     surf = surface()
-    surf.ticker = ticker
+    surf.ticker = ticker    
+    
 
     # Market stats
-    st.subheader("Market Data")
+    st.subheader("Market Data") 
     st.write(f"• Spot price: ${surf.spot:.2f}")
     st.write(f"• Risk-free rate: {surf.latestRate:.2f}%")
     try:
