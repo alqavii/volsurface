@@ -18,6 +18,7 @@ import plotly.graph_objects as go
 import os
 import streamlit as st
 import pytz
+import json
 
 FredApiKey = st.secrets["FRED_API_KEY"] or os.getenv("FRED_API_KEY")
 
@@ -41,6 +42,7 @@ class surface():
         self.latestRate = None
         self.surface = {}
         self.dividendYield = None
+        self.universe = {}
 
     @property
     def ticker(self):
@@ -58,11 +60,44 @@ class surface():
         self.getRates()
         self.getDividendYield()
         self.ivSurface()
+        self.getTickerUniverse()
         
 
+    def getTickerUniverse(self):
+        tickerUniverse = "tickerUniverse.csv"
 
-    
+        if os.path.exists(tickerUniverse):
+            modified = datetime.fromtimestamp(os.path.getmtime(tickerUniverse))
+            age_seconds = (datetime.now() - modified).total_seconds()
 
+            if age_seconds < 86400:  # 1 day
+                df = pd.read_csv(tickerUniverse)
+                self.universe = df.set_index("ticker").to_dict(orient="index")
+                return
+
+        tickers = pd.read_csv("nasdaqlisted.txt", sep="|").iloc[:-1]
+        tickers = tickers[["Symbol", "Security Name"]].rename(columns={"Symbol": "ticker", "Security Name": "name"})
+        tickers = tickers.dropna(subset=["ticker", "name"])
+        tickers["ticker"] = tickers["ticker"].astype(str)
+
+        rows = []
+        for ticker, name in zip(tickers['ticker'], tickers['name']):
+            try:
+                sleep(0.5)  # Avoid hitting API limits
+                stock = yf.Ticker(ticker)
+                mcap = stock.info.get('marketCap', 0)
+                if mcap and mcap > 1e9:  # Only big caps
+                    rows.append({"ticker": ticker, "name": name, "mcap": mcap})
+            except Exception as e:
+                print(f"Failed {ticker}: {e}")
+                continue
+
+        # Save to CSV
+        df = pd.DataFrame(rows)
+        df.to_csv(tickerUniverse, index=False)
+        self.universe = df.set_index("ticker").to_dict(orient="index")
+
+ 
     def getCalls(self):
         for i in range(0,self.range):
             sleep(0.5)  
@@ -72,7 +107,8 @@ class surface():
             #print(temp['contractSymbol'].iloc[0])
             #print(len(self.ticker))
             self.calls[f"{temp['contractSymbol'].iloc[0][4+len(self.ticker):6+len(self.ticker)]}/{temp['contractSymbol'].iloc[0][2+len(self.ticker):4+len(self.ticker)]}"] = prices
-                     
+
+                  
     def getPuts(self):
         for i in range(0,self.range):
             temp = self.stock.option_chain(self.stock.options[i]).puts
@@ -149,6 +185,7 @@ class surface():
             print(f"{expiry}: {tte:.4f} years")
         print("\n")
 
+
     def generateRates(self):
         data_part1 = fred.get_series('EFFR', observation_start='2000-01-01', observation_end='2023-01-01')
 
@@ -160,6 +197,7 @@ class surface():
         rates = pd.concat([df_part1, df_part2]).drop_duplicates(subset=['date']).sort_values(by='date')
         
         rates.to_csv('RateData.csv', index=False)
+
 
     def getRates(self):
         try:
@@ -432,7 +470,9 @@ class surface():
                 zaxis_title='IV'
             ),
             title=f'3D IV Surface for {self.ticker}',
-            autosize=True
+            height=600,
+            autosize=True,
+            
         )
         return fig
 
