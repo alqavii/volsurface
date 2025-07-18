@@ -44,7 +44,7 @@ class surface():
         self.surface = {}
         self.dividendYield = None
         self.universe = {}
-        self.autocompleteList = pd.DataFrame(columns=["ticker", "name", "spot", "mcap"])
+        self.autocompleteList = []
 
     @property
     def ticker(self):
@@ -64,37 +64,42 @@ class surface():
         self.getDividendYield()
         self.ivSurface()
         
-        
-        
+
+
+
     def getTickerUniverse(self, full=True):
         tickerUniverse = "tickerUniverse.csv"
+        print("Fetching ticker universe...")
 
         if os.path.exists(tickerUniverse):
             modified = datetime.fromtimestamp(os.path.getmtime(tickerUniverse))
             age_seconds = (datetime.now() - modified).total_seconds()
-
             if age_seconds < 86400:  # 1 day
+                print("Using cached ticker universe...")
                 df = pd.read_csv(tickerUniverse)
                 self.universe = df.set_index("ticker").to_dict(orient="index")
+                self.autocompleteList = [
+                    f"{ticker} - {info['name']}"
+                    for ticker, info in sorted(self.universe.items(), key=lambda x: x[1]['mcap'], reverse=True)
+                ]
                 return
-
+        print("Ticker universe is outdated, fetching new data...")
         tickers = pd.read_csv("nasdaqlisted.txt", sep="|").iloc[:-1]
-        tickers = tickers[["Symbol", "Security Name"]].rename(columns={"Symbol": "ticker", "Security Name": "name"})
-        tickers = tickers.dropna(subset=["ticker", "name"])
+        tickers = tickers[["Symbol"]].rename(columns={"Symbol": "ticker"})
+        tickers = tickers.dropna(subset=["ticker"])
         tickers["ticker"] = tickers["ticker"].astype(str)
 
         rows = []
-        for ticker, name in zip(tickers['ticker'], tickers['name']):
+        for ticker in tickers['ticker']:
             try:
-                sleep(0.2)  # Avoid hitting API limits
+                sleep(0.1)  # Avoid hitting API limits
                 print(f"Processing {ticker}...")
                 stock = yf.Ticker(ticker)
                 spot = stock.history(period="1d")['Close'].iloc[-1]
+                name = stock.info.get('longName', ticker)
                 mcap = stock.info.get('marketCap', 0)
-                mcap = stock.info.get('marketCap', 0)
-                mcap_billion = mcap / 1e9 if mcap is not None else 0
-                if full or mcap_billion > 1:
-                    rows.append({"ticker": ticker, "name": name, "spot": spot, "mcap": mcap_billion})
+                if (mcap >= 1e7) and (full or mcap > 1e9):
+                    rows.append({"ticker": ticker, "name": name, "mcap": mcap})
             except Exception as e:
                 print(f"Failed {ticker}: {e}")
                 continue
@@ -102,7 +107,12 @@ class surface():
         df = pd.DataFrame(rows)
         df.to_csv(tickerUniverse, index=False)
         self.universe = df.set_index("ticker").to_dict(orient="index")
-        self.autocompleteList = [f"{ticker} - {info['name']} - {info['spot']} - ${info['mcap']}B" for ticker, info in self.universe.items()]
+        self.autocompleteList = [
+            f"{ticker} - {info['name']}"
+            for ticker, info in sorted(self.universe.items(), key=lambda x: x[1]['mcap'], reverse=True)
+        ]
+        return
+
 
 
     def backgroundTickerUniverse(self):
@@ -121,7 +131,7 @@ class surface():
  
     def getCalls(self):
         for i in range(0,self.range):
-            sleep(0.5)  
+            sleep(0.2)  
             temp = self.stock.option_chain(self.stock.options[i]).calls
             prices = temp[['strike', 'lastPrice', 'bid', 'ask']]
             prices = prices[(prices['strike'] <= self.spot*1.2) & (prices['strike'] >= self.spot*0.8)].sort_values(by='strike')
@@ -132,6 +142,7 @@ class surface():
                   
     def getPuts(self):
         for i in range(0,self.range):
+            sleep(0.2)
             temp = self.stock.option_chain(self.stock.options[i]).puts
             #print(temp['contractSymbol'].iloc[0])
             prices = temp[['strike', 'lastPrice', 'bid', 'ask']]
@@ -502,22 +513,23 @@ class surface():
 
 
 
-test = surface()
-test.ticker = "AAPL"
-
 st.title("Volatility Surface Explorer")
 
-# Sidebar: ticker input
-ticker = st.sidebar.text_input("Ticker", value="AAPL").upper()
+surf = surface()
+surf.getTickerUniverse(full=True)
+
+selection = st.sidebar.selectbox(
+    "Select a Ticker",
+    options=["Select a ticker"] + surf.autocompleteList
+)
 
 
-if ticker:
-    # Build and compute
-    surf = surface()
+
+if selection != "Select a ticker":
+
+    ticker = selection.split(" - ")[0].upper()    
     surf.ticker = ticker    
     
-
-    # Market stats
     st.subheader("Market Data") 
     st.write(f"• Spot price: ${surf.spot:.2f}")
     st.write(f"• Risk-free rate: {surf.latestRate:.2f}%")
