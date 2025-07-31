@@ -54,7 +54,7 @@ class surface():
         self._ticker = value
         self.stock = yf.Ticker(self.ticker)
         self.spot = self.stock.history(period="1d")['Close'].iloc[-1]
-        #self.history = self.stock.history(period="1mo")
+        self.history = self.stock.history(period="1mo")
         print(f"Spot price for {self.ticker} is ${self.spot:.2f}\n")
         self.backgroundTickerUniverse()
         self.getCalls()
@@ -320,7 +320,7 @@ class surface():
             data['midPrice'] = (data['bid'] + data['ask']) / 2
             data['IV'] = data.apply(lambda row: self.impliedVolatility(C = (row['bid'] + row['ask'])/2, K = row['strike'], T = T), axis=1)
             #data['IV'] = data.apply(lambda row: self.impliedVolatility(C = row['lastPrice'], K = row['strike'], T = T), axis=1)
-            data['smoothedIV'] = UnivariateSpline(data.dropna(subset=['IV'])['strike'], data.dropna(subset=['IV'])['IV'], s=0.8)(data['strike'])
+            data['smoothedIV'] = UnivariateSpline(data.dropna(subset=['IV'])['strike'], data.dropna(subset=['IV'])['IV'], s=0.01)(data['strike'])
             self.surface[expiry] = data[['strike', 'midPrice', 'IV', 'smoothedIV']].copy()
             #for exp, data in self.surface.items():
             #a    if max(data[exp]['IV']) > 2 and 
@@ -516,7 +516,7 @@ class surface():
 st.title("Volatility Surface Explorer")
 
 surf = surface()
-surf.getTickerUniverse(full=True)
+
 
 selection = st.sidebar.selectbox(
     "Select a Ticker",
