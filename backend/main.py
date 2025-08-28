@@ -1,11 +1,9 @@
-from email import header
+
 from time import sleep
-from functools import lru_cache
-from xmlrpc.client import ExpatParser
 from matplotlib import cm
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import norm
