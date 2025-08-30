@@ -1,13 +1,12 @@
 import yfinance as yf
 import pandas as pd
-import numpy as np
 from typing import Dict, List, cast, Any
 from models.config_model import Config
 from models.ticker_data import TickerModel
 from models.options_data import OptionsModel, OptionType
 from time import sleep
 
-class FetchOptions:
+class OptionsAdapter:
     @staticmethod
     def fetchOptions(cfg: Config, ticker: TickerModel) -> List[OptionsModel]:
         stock = yf.Ticker(cfg.ticker)

@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from typing import Dict
 from backend.models.config_model import Config
 from backend.models.ticker_data import TickerModel
-from backend.services.utils.exchange_metadata import EXCHANGE_TIMEZONES
+from backend.data.metadata import EXCHANGE_TIMEZONES
 
 class TickerAdapter:
     @staticmethod
