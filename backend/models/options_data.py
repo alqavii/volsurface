@@ -3,8 +3,6 @@ from typing import Optional
 from datetime import date
 from enum import Enum
 
-from sympy import O  
-
 class OptionType(str, Enum):
     CALL = "call"
     PUT = "put"
