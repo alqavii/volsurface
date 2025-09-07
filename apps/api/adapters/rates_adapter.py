@@ -4,7 +4,7 @@ from fredapi import Fred
 import os
 from datetime import datetime
 
-from backend.data.metadata import TENOR_TO_ID
+from api.data.metadata import TENOR_TO_ID
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"

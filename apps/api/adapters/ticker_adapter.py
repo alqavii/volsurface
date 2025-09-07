@@ -2,9 +2,9 @@ import yfinance as yf
 import pandas as pd
 from zoneinfo import ZoneInfo
 from typing import Dict
-from backend.models.config_model import Config
-from backend.models.ticker_data import TickerModel
-from backend.data.metadata import EXCHANGE_TIMEZONES
+from api.models.config_model import Config
+from api.models.ticker_data import TickerModel
+from api.data.metadata import EXCHANGE_TIMEZONES
 
 class TickerAdapter:
     @staticmethod

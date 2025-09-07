@@ -1,4 +1,4 @@
-from backend.adapters.rates_adapter import RatesAdapter
+from api.adapters.rates_adapter import RatesAdapter
 
 
 
