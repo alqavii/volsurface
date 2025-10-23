@@ -1,10 +1,9 @@
 import yfinance as yf
-import pandas as pd
 from zoneinfo import ZoneInfo
-from typing import Dict
 from api.models.config_model import Config
 from api.models.ticker_data import TickerModel
 from api.data.metadata import EXCHANGE_TIMEZONES
+
 
 class TickerAdapter:
     @staticmethod
@@ -15,12 +14,9 @@ class TickerAdapter:
         exchange = stock.info.get("exchange", "N/A")
         timezone = EXCHANGE_TIMEZONES.get(exchange, ZoneInfo("UTC"))
         return TickerModel(
-            spot=spot, 
-            dividendYield=dividendYield, 
-            exchange=exchange, 
-            timezone=timezone
-            )
-    
+            spot=spot, dividendYield=dividendYield, exchange=exchange, timezone=timezone
+        )
+
     @staticmethod
     def fetchFull(cfg: Config) -> TickerModel:
         base = TickerAdapter.fetchBasic(cfg)
