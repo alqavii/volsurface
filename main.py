@@ -46,6 +46,7 @@ class surface:
         self.autocompleteList = []
         # Load ticker universe immediately if file exists
         self._loadTickerUniverseIfExists()
+        self._loadTickerUniverseIfExists()
 
     @property
     def ticker(self):
@@ -649,6 +650,24 @@ if "surf" not in st.session_state:
     st.session_state.surf = surface()
 
 surf = st.session_state.surf
+
+# Show loading message if ticker universe is empty
+if not surf.autocompleteList:
+    st.sidebar.info("Loading ticker universe... This may take a moment on first run.")
+    # Check if file exists but list is still empty (might be loading)
+    if os.path.exists("tickerUniverse.csv"):
+        # Try to reload it
+        try:
+            df = pd.read_csv("tickerUniverse.csv")
+            surf.universe = df.set_index("ticker").to_dict(orient="index")
+            surf.autocompleteList = [
+                f"{ticker} - {info['name']}"
+                for ticker, info in sorted(
+                    surf.universe.items(), key=lambda x: x[1]["mcap"], reverse=True
+                )
+            ]
+        except Exception as e:
+            st.sidebar.warning(f"Error loading ticker universe: {e}")
 
 selection = st.sidebar.selectbox(
     "Select a Ticker", options=["Select a ticker"] + surf.autocompleteList
