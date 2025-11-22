@@ -17,6 +17,7 @@ import os
 import streamlit as st
 import pytz
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fredapi import Fred
 
 
@@ -43,6 +44,8 @@ class surface:
         self.dividendYield = None
         self.universe = {}
         self.autocompleteList = []
+        # Load ticker universe immediately if file exists
+        self._loadTickerUniverseIfExists()
 
     @property
     def ticker(self):
@@ -113,6 +116,37 @@ class surface:
         ]
         return
 
+    def _loadTickerUniverseIfExists(self):
+        """Load ticker universe immediately if CSV file exists and is recent"""
+        tickerUniverse = "tickerUniverse.csv"
+        if os.path.exists(tickerUniverse):
+            try:
+                modified = datetime.fromtimestamp(os.path.getmtime(tickerUniverse))
+                age_seconds = (datetime.now() - modified).total_seconds()
+                if age_seconds < 86400:  # Less than 1 day old
+                    df = pd.read_csv(tickerUniverse)
+                    self.universe = df.set_index("ticker").to_dict(orient="index")
+                    self.autocompleteList = [
+                        f"{ticker} - {info['name']}"
+                        for ticker, info in sorted(
+                            self.universe.items(),
+                            key=lambda x: x[1]["mcap"],
+                            reverse=True,
+                        )
+                    ]
+                    # Start background update if needed
+                    if age_seconds > 3600:  # Older than 1 hour, update in background
+                        threading.Thread(
+                            target=self.getTickerUniverse, kwargs={"full": False}
+                        ).start()
+            except Exception as e:
+                print(f"Error loading ticker universe: {e}")
+                # If loading fails, start background fetch
+                threading.Thread(target=self.getTickerUniverse).start()
+        else:
+            # File doesn't exist, start background fetch
+            threading.Thread(target=self.getTickerUniverse).start()
+
     def backgroundTickerUniverse(self):
         if os.path.exists("tickerUniverse.csv"):
             df = pd.read_csv("tickerUniverse.csv")
@@ -128,36 +162,53 @@ class surface:
             threading.Thread(target=self.getTickerUniverse).start()
         return
 
-    def getCalls(self):
-        for i in range(0, self.range):
-            sleep(0.2)
-            temp = self.stock.option_chain(self.stock.options[i]).calls
-            prices = temp[["strike", "lastPrice", "bid", "ask"]]
+    def _fetch_option_chain(self, option_date, option_type):
+        """Helper method to fetch a single option chain"""
+        try:
+            sleep(0.1)  # Reduced sleep time
+            chain = self.stock.option_chain(option_date)
+            data = chain.calls if option_type == "calls" else chain.puts
+            prices = data[["strike", "lastPrice", "bid", "ask"]].copy()
             prices = prices[
                 (prices["strike"] <= self.spot * 1.2)
                 & (prices["strike"] >= self.spot * 0.8)
             ].sort_values(by="strike")
-            # print(temp['contractSymbol'].iloc[0])
-            # print(len(self.ticker))
-            self.calls[
-                f"{temp['contractSymbol'].iloc[0][4 + len(self.ticker) : 6 + len(self.ticker)]}/{temp['contractSymbol'].iloc[0][2 + len(self.ticker) : 4 + len(self.ticker)]}"
-            ] = prices
+
+            if len(prices) > 0:
+                contract_symbol = data["contractSymbol"].iloc[0]
+                expiry_key = f"{contract_symbol[4 + len(self.ticker) : 6 + len(self.ticker)]}/{contract_symbol[2 + len(self.ticker) : 4 + len(self.ticker)]}"
+                return expiry_key, prices
+        except Exception as e:
+            print(f"Error fetching {option_type} for {option_date}: {e}")
+        return None, None
+
+    def getCalls(self):
+        """Fetch calls in parallel"""
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(
+                    self._fetch_option_chain, self.stock.options[i], "calls"
+                ): i
+                for i in range(min(self.range, len(self.stock.options)))
+            }
+            for future in as_completed(futures):
+                expiry_key, prices = future.result()
+                if expiry_key and prices is not None:
+                    self.calls[expiry_key] = prices
 
     def getPuts(self):
-        for i in range(0, self.range):
-            sleep(0.2)
-            temp = self.stock.option_chain(self.stock.options[i]).puts
-            # print(temp['contractSymbol'].iloc[0])
-            prices = temp[["strike", "lastPrice", "bid", "ask"]]
-            prices = prices[
-                (prices["strike"] <= self.spot * 1.2)
-                & (prices["strike"] >= self.spot * 0.8)
-            ].sort_values(by="strike")
-            # print(temp['contractSymbol'].iloc[0])
-            # print(len(self.ticker))
-            self.puts[
-                f"{temp['contractSymbol'].iloc[0][4 + len(self.ticker) : 6 + len(self.ticker)]}/{temp['contractSymbol'].iloc[0][2 + len(self.ticker) : 4 + len(self.ticker)]}"
-            ] = prices
+        """Fetch puts in parallel"""
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(
+                    self._fetch_option_chain, self.stock.options[i], "puts"
+                ): i
+                for i in range(min(self.range, len(self.stock.options)))
+            }
+            for future in as_completed(futures):
+                expiry_key, prices = future.result()
+                if expiry_key and prices is not None:
+                    self.puts[expiry_key] = prices
 
     def printCalls(self):
         if not self.calls:
@@ -259,33 +310,42 @@ class surface:
         rates.to_csv("RateData.csv", index=False)
 
     def getRates(self):
-        try:
-            rates = pd.read_csv("RateData.csv", parse_dates=["date"]).dropna(
-                subset=["date"]
-            )
-            rates = rates[["date", "value"]]
-        except:
-            self.generateRates()
-            rates = pd.read_csv("RateData.csv", parse_dates=["date"]).dropna(
-                subset=["date"]
-            )
-            rates = rates[["date", "value"]]
+        # Use session state to cache rates data
+        cache_key = "rates_data"
+        if cache_key not in st.session_state:
+            try:
+                rates = pd.read_csv("RateData.csv", parse_dates=["date"]).dropna(
+                    subset=["date"]
+                )
+                rates = rates[["date", "value"]]
+            except:
+                self.generateRates()
+                rates = pd.read_csv("RateData.csv", parse_dates=["date"]).dropna(
+                    subset=["date"]
+                )
+                rates = rates[["date", "value"]]
 
-        rates["value"] = rates["value"].ffill()
+            rates["value"] = rates["value"].ffill()
 
-        yesterday = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+            yesterday = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-        if rates["date"].iloc[-1] != yesterday:
-            rates.to_csv("RateData.csv", index=False)
-            update = fred.get_series("EFFR", observation_start=rates["date"].iloc[-1])
-            rates = (
-                pd.concat([rates, update])
-                .drop_duplicates(subset=["date"])
-                .dropna(subset=["date"])
-                .sort_values(by="date")
-            )
-            rates = rates[["date", "value"]]
-            rates.to_csv("RateData.csv", index=False)
+            if rates["date"].iloc[-1] != yesterday:
+                rates.to_csv("RateData.csv", index=False)
+                update = fred.get_series(
+                    "EFFR", observation_start=rates["date"].iloc[-1]
+                )
+                rates = (
+                    pd.concat([rates, update])
+                    .drop_duplicates(subset=["date"])
+                    .dropna(subset=["date"])
+                    .sort_values(by="date")
+                )
+                rates = rates[["date", "value"]]
+                rates.to_csv("RateData.csv", index=False)
+
+            st.session_state[cache_key] = rates
+        else:
+            rates = st.session_state[cache_key]
 
         self.latestRate = rates["value"].iloc[-1]
         return rates
@@ -351,31 +411,52 @@ class surface:
             except:
                 return np.nan
 
+    def _calculateIVVectorized(self, strikes, midPrices, T):
+        """Calculate IVs - optimized with better error handling"""
+        r = self.latestRate / 100
+        q = self.dividendYield / 100 if self.dividendYield else 0
+        S = self.spot
+
+        IVs = np.zeros(len(strikes))
+        for i, (K, C) in enumerate(zip(strikes, midPrices)):
+            if C <= 0 or K <= 0:
+                IVs[i] = np.nan
+                continue
+            IVs[i] = self.impliedVolatility(K=K, T=T, C=C)
+        return IVs
+
     def ivSurface(self):
         for expiry, data in self.calls.items():
             T = self.timeToExpiries[expiry]
             if T * 365 * 24 < 6:
                 continue
             data = data.copy()
-            # data = data[(data['bid'] > 0) & (data['ask'] > data['bid']) & (data['ask'] < self.spot * 2)]
             data["midPrice"] = (data["bid"] + data["ask"]) / 2
-            data["IV"] = data.apply(
-                lambda row: self.impliedVolatility(
-                    C=(row["bid"] + row["ask"]) / 2, K=row["strike"], T=T
-                ),
-                axis=1,
-            )
-            # data['IV'] = data.apply(lambda row: self.impliedVolatility(C = row['lastPrice'], K = row['strike'], T = T), axis=1)
-            data["smoothedIV"] = UnivariateSpline(
-                data.dropna(subset=["IV"])["strike"],
-                data.dropna(subset=["IV"])["IV"],
-                s=0.01,
-            )(data["strike"])
-            self.surface[expiry] = data[
+
+            # Filter out invalid data early
+            valid_data = data[(data["bid"] > 0) & (data["ask"] > data["bid"])].copy()
+            if len(valid_data) == 0:
+                continue
+
+            # Calculate IVs
+            strikes = valid_data["strike"].values
+            midPrices = valid_data["midPrice"].values
+            IVs = self._calculateIVVectorized(strikes, midPrices, T)
+            valid_data["IV"] = IVs
+
+            # Only smooth if we have valid IVs
+            valid_mask = ~np.isnan(IVs)
+            if valid_mask.sum() > 3:  # Need at least 3 points for spline
+                valid_strikes = strikes[valid_mask]
+                valid_IVs = IVs[valid_mask]
+                spline = UnivariateSpline(valid_strikes, valid_IVs, s=0.01)
+                valid_data["smoothedIV"] = spline(strikes)
+            else:
+                valid_data["smoothedIV"] = IVs
+
+            self.surface[expiry] = valid_data[
                 ["strike", "midPrice", "IV", "smoothedIV"]
             ].copy()
-            # for exp, data in self.surface.items():
-            # a    if max(data[exp]['IV']) > 2 and
         return
 
     def printIVSurface(self):
@@ -563,8 +644,11 @@ class surface:
 
 st.title("Volatility Surface Explorer")
 
-surf = surface()
+# Cache surface object in session state
+if "surf" not in st.session_state:
+    st.session_state.surf = surface()
 
+surf = st.session_state.surf
 
 selection = st.sidebar.selectbox(
     "Select a Ticker", options=["Select a ticker"] + surf.autocompleteList
@@ -573,7 +657,11 @@ selection = st.sidebar.selectbox(
 
 if selection != "Select a ticker":
     ticker = selection.split(" - ")[0].upper()
-    surf.ticker = ticker
+
+    # Only recalculate if ticker changed
+    if surf.ticker != ticker:
+        with st.spinner("Loading volatility surface..."):
+            surf.ticker = ticker
 
     st.subheader("Market Data")
     st.write(f"• Spot price: ${surf.spot:.2f}")
@@ -585,10 +673,10 @@ if selection != "Select a ticker":
 
     # 3D plot
     st.subheader("3D Volatility Surface")
-    fig3d = surf.fig3dIVSurface()  # ditto
+    fig3d = surf.fig3dIVSurface()
     st.plotly_chart(fig3d, use_container_width=True)
 
     # 2D plot
-    st.subheader("Impled Volatility Surface (2D)")
-    fig2d = surf.fig2dIVSurface()  # your method must return the Figure
+    st.subheader("Implied Volatility Surface (2D)")
+    fig2d = surf.fig2dIVSurface()
     st.plotly_chart(fig2d, use_container_width=True)
